@@ -1,0 +1,11 @@
+Django
+djangorestframework
+channels
+pika
+celery
+redis
+python-dotenv
+gunicorn
+psycopg2-binary
+django-cors-headers
+daphne

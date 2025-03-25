@@ -1,0 +1,1214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RabbitMQ Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#5D5CDE',
+                        rabbitRed: '#ff6b6b',
+                        rabbitGreen: '#51cf66',
+                        rabbitBlue: '#339af0',
+                        rabbitPurple: '#cc5de8',
+                        rabbitOrange: '#ff922b',
+                    },
+                    animation: {
+                        'bounce-slow': 'bounce 3s infinite',
+                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .node {
+            cursor: pointer;
+        }
+        .node circle {
+            fill: #fff;
+            stroke: steelblue;
+            stroke-width: 3px;
+        }
+        .node text {
+            font: 12px sans-serif;
+        }
+        .link {
+            fill: none;
+            stroke: #ccc;
+            stroke-width: 2px;
+        }
+        .message-particle {
+            fill: #ff6b6b;
+            r: 5;
+        }
+        .chart-container {
+            position: relative;
+            height: 200px;
+            width: 100%;
+        }
+        @keyframes flow {
+            0% {
+                stroke-dashoffset: 24;
+            }
+            100% {
+                stroke-dashoffset: 0;
+            }
+        }
+        .flow-path {
+            stroke-dasharray: 12, 12;
+            animation: flow 1s linear infinite;
+        }
+        .dark .node circle {
+            stroke: #339af0;
+        }
+        .dark .link {
+            stroke: #666;
+        }
+        .grid-bg {
+            background-size: 20px 20px;
+            background-image:
+                linear-gradient(to right, rgba(93, 92, 222, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(93, 92, 222, 0.05) 1px, transparent 1px);
+        }
+        .dark .grid-bg {
+            background-image:
+                linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        }
+        .connection-line {
+            stroke: #999;
+            stroke-width: 2;
+            stroke-dasharray: 5, 5;
+        }
+        .dark .connection-line {
+            stroke: #666;
+        }
+    </style>
+</head>
+<body class="font-sans antialiased bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200">
+    <div class="min-h-screen flex flex-col">
+        <header class="bg-white dark:bg-gray-800 shadow">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <svg class="h-8 w-8 text-rabbitOrange" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 8c0-2.21-1.79-4-4-4H9.5C7.01 4 5 6.01 5 8.5c0 2.49 2.01 4.5 4.5 4.5H14c2.21 0 4-1.79 4-4z"/>
+                        <path d="M18 8v8c0 1.1-.9 2-2 2h-2c-1.1 0-2-.9-2-2v-3"/>
+                        <path d="M8 9l4-4"/>
+                        <circle cx="16" cy="6" r="1"/>
+                    </svg>
+                    <h1 class="text-xl font-bold">RabbitMQ Dashboard</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-2">
+                            <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                            </svg>
+                        </span>
+                        <input type="text" placeholder="Search..." class="w-full py-2 pl-10 pr-4 rounded-md bg-gray-100 dark:bg-gray-700 text-base focus:outline-none focus:ring-2 focus:ring-primary">
+                    </div>
+                    <button id="theme-toggle" class="rounded-full p-2 hover:bg-gray-200 dark:hover:bg-gray-700">
+                        <svg id="theme-toggle-dark-icon" class="hidden h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                        </svg>
+                        <svg id="theme-toggle-light-icon" class="hidden h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-grow grid-bg">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 flex items-center space-x-4">
+                        <div class="flex-shrink-0 p-3 bg-blue-100 dark:bg-blue-900 rounded-full">
+                            <svg class="h-6 w-6 text-blue-500 dark:text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Queues</div>
+                            <div id="queue-count" class="text-2xl font-semibold">0</div>
+                        </div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 flex items-center space-x-4">
+                        <div class="flex-shrink-0 p-3 bg-green-100 dark:bg-green-900 rounded-full">
+                            <svg class="h-6 w-6 text-green-500 dark:text-green-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Exchanges</div>
+                            <div id="exchange-count" class="text-2xl font-semibold">0</div>
+                        </div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 flex items-center space-x-4">
+                        <div class="flex-shrink-0 p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                            <svg class="h-6 w-6 text-purple-500 dark:text-purple-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Connections</div>
+                            <div id="connection-count" class="text-2xl font-semibold">0</div>
+                        </div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 flex items-center space-x-4">
+                        <div class="flex-shrink-0 p-3 bg-red-100 dark:bg-red-900 rounded-full">
+                            <svg class="h-6 w-6 text-red-500 dark:text-red-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Channels</div>
+                            <div id="channel-count" class="text-2xl font-semibold">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-4 py-5 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Message Throughput</h3>
+                            <div class="flex space-x-2">
+                                <select id="throughput-time-range" class="rounded-md text-sm bg-gray-100 dark:bg-gray-700 border-transparent focus:ring-primary">
+                                    <option value="1m">1m</option>
+                                    <option value="5m" selected>5m</option>
+                                    <option value="15m">15m</option>
+                                    <option value="1h">1h</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="p-4">
+                            <div class="chart-container">
+                                <canvas id="throughput-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-4 py-5 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Queue Sizes</h3>
+                            <div class="flex space-x-2">
+                                <select id="queue-size-filter" class="rounded-md text-sm bg-gray-100 dark:bg-gray-700 border-transparent focus:ring-primary">
+                                    <option value="all">All Queues</option>
+                                    <option value="top5">Top 5</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="p-4">
+                            <div class="chart-container">
+                                <canvas id="queue-size-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-6">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-4 py-5 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Message Flow Topology</h3>
+                            <div class="flex space-x-2">
+                                <button id="add-exchange-btn" class="py-1 px-3 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm flex items-center">
+                                    <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                                    </svg>
+                                    Exchange
+                                </button>
+                                <button id="add-queue-btn" class="py-1 px-3 bg-green-500 hover:bg-green-600 text-white rounded-md text-sm flex items-center">
+                                    <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                                    </svg>
+                                    Queue
+                                </button>
+                                <button id="add-binding-btn" class="py-1 px-3 bg-purple-500 hover:bg-purple-600 text-white rounded-md text-sm flex items-center">
+                                    <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 10-5.656-5.656l-1.102 1.101"/>
+                                    </svg>
+                                    Bind
+                                </button>
+                            </div>
+                        </div>
+                        <div class="p-4 overflow-auto" style="height: 400px;">
+                            <div id="topology-container" class="w-full h-full"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-4 py-5 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-medium">Publish Message</h3>
+                        </div>
+                        <div class="p-4 space-y-4">
+                            <div>
+                                <label for="exchange-select" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Exchange</label>
+                                <select id="exchange-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md">
+                                    <option value="" disabled selected>Select an exchange</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="routing-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Routing Key</label>
+                                <input type="text" id="routing-key" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md" placeholder="Enter routing key">
+                            </div>
+                            <div>
+                                <label for="message-payload" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Message Payload</label>
+                                <textarea id="message-payload" rows="4" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md" placeholder='{"key": "value"}'></textarea>
+                            </div>
+                            <div class="flex justify-end">
+                                <button id="publish-btn" class="px-4 py-2 bg-primary hover:bg-opacity-90 text-white rounded-md">Publish</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-4 py-5 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-medium">Consume Message</h3>
+                        </div>
+                        <div class="p-4 space-y-4">
+                            <div>
+                                <label for="queue-select" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Queue</label>
+                                <select id="queue-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md">
+                                    <option value="" disabled selected>Select a queue</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="message-count" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Message Count</label>
+                                <input type="number" id="message-count" min="1" max="10" value="1" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md">
+                            </div>
+                            <div class="flex justify-end">
+                                <button id="consume-btn" class="px-4 py-2 bg-primary hover:bg-opacity-90 text-white rounded-md">Consume</button>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Messages</label>
+                                <div id="consumed-messages" class="mt-1 rounded-md border border-gray-300 dark:border-gray-700 h-36 overflow-y-auto p-3 bg-gray-50 dark:bg-gray-900">
+                                    <div class="text-sm text-gray-500 dark:text-gray-400 italic">No messages consumed yet</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+                <div class="flex justify-between items-center">
+                    <div class="text-sm text-gray-500 dark:text-gray-400">
+                        RabbitMQ Dashboard
+                    </div>
+                    <div class="flex space-x-4">
+                        <span id="status-indicator" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                            <span class="flex-shrink-0 h-2 w-2 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>
+                            Connected
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </footer>
+
+        <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-md w-full p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 id="modal-title" class="text-lg font-medium">Add Exchange</h3>
+                    <button id="modal-close" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="modal-content" class="space-y-4">
+                </div>
+                <div class="mt-6 flex justify-end space-x-3">
+                    <button id="modal-cancel" class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Cancel</button>
+                    <button id="modal-confirm" class="px-4 py-2 bg-primary hover:bg-opacity-90 text-white rounded-md">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.classList.add('dark');
+        }
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
+            if (event.matches) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeToggleBtn = document.getElementById('theme-toggle');
+            const themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
+            const themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
+
+            if (document.documentElement.classList.contains('dark')) {
+                themeToggleLightIcon.classList.remove('hidden');
+            } else {
+                themeToggleDarkIcon.classList.remove('hidden');
+            }
+
+            themeToggleBtn.addEventListener('click', function() {
+                document.documentElement.classList.toggle('dark');
+                themeToggleDarkIcon.classList.toggle('hidden');
+                themeToggleLightIcon.classList.toggle('hidden');
+            });
+
+            // RabbitMQ Dashboard Client
+            class RabbitMQDashboard {
+                constructor() {
+                    this.baseUrl = '/api';
+                    this.socket = null;
+                    this.exchanges = [];
+                    this.queues = [];
+                    this.bindings = [];
+                    this.metrics = {
+                        throughput: {
+                            publish: Array(60).fill(0),
+                            consume: Array(60).fill(0)
+                        },
+                        queueSizes: {}
+                    };
+                    
+                    this.initializeWebSocket();
+                    this.initializeCharts();
+                    this.setupEventListeners();
+                    this.fetchRabbitMQData();
+                }
+                
+                initializeWebSocket() {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/rabbitmq/`;
+                    
+                    this.socket = new WebSocket(wsUrl);
+                    
+                    this.socket.onopen = () => {
+                        console.log('WebSocket connection established');
+                        document.getElementById('status-indicator').classList.remove('bg-red-100', 'text-red-800', 'dark:bg-red-900', 'dark:text-red-200');
+                        document.getElementById('status-indicator').classList.add('bg-green-100', 'text-green-800', 'dark:bg-green-900', 'dark:text-green-200');
+                        document.getElementById('status-indicator').innerHTML = `
+                            <span class="flex-shrink-0 h-2 w-2 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>
+                            Connected
+                        `;
+                        
+                        // Request metrics history
+                        this.socket.send(JSON.stringify({
+                            command: 'get_metrics'
+                        }));
+                    };
+                    
+                    this.socket.onclose = () => {
+                        console.log('WebSocket connection closed');
+                        document.getElementById('status-indicator').classList.remove('bg-green-100', 'text-green-800', 'dark:bg-green-900', 'dark:text-green-200');
+                        document.getElementById('status-indicator').classList.add('bg-red-100', 'text-red-800', 'dark:bg-red-900', 'dark:text-red-200');
+                        document.getElementById('status-indicator').innerHTML = `
+                            <span class="flex-shrink-0 h-2 w-2 rounded-full bg-red-500 mr-1.5"></span>
+                            Disconnected
+                        `;
+                        
+                        // Try to reconnect after 5 seconds
+                        setTimeout(() => this.initializeWebSocket(), 5000);
+                    };
+                    
+                    this.socket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                    };
+                    
+                    this.socket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.type === 'initial_state') {
+                            this.handleInitialState(data.data);
+                        } else if (data.type === 'update') {
+                            this.handleUpdate(data.data);
+                        } else if (data.type === 'metrics_history') {
+                            this.handleMetricsHistory(data.data);
+                        } else if (data.type === 'message_published') {
+                            this.handleMessagePublished(data.data);
+                        } else if (data.type === 'messages_consumed') {
+                            this.handleMessagesConsumed(data.data);
+                        }
+                    };
+                }
+                
+                handleInitialState(data) {
+                    document.getElementById('exchange-count').textContent = data.exchanges;
+                    document.getElementById('queue-count').textContent = data.queues;
+                    document.getElementById('connection-count').textContent = data.connections;
+                    document.getElementById('channel-count').textContent = data.channels;
+                    
+                    // Update metrics
+                    this.metrics.throughput.publish[this.metrics.throughput.publish.length - 1] = data.metrics.publish_rate;
+                    this.metrics.throughput.consume[this.metrics.throughput.consume.length - 1] = data.metrics.consume_rate;
+                    this.metrics.queueSizes = data.metrics.queue_metrics;
+                    
+                    this.updateThroughputChart();
+                    this.updateQueueSizeChart();
+                }
+                
+                handleUpdate(data) {
+                    document.getElementById('exchange-count').textContent = data.exchanges;
+                    document.getElementById('queue-count').textContent = data.queues;
+                    document.getElementById('connection-count').textContent = data.connections;
+                    document.getElementById('channel-count').textContent = data.channels;
+                    
+                    // Update metrics
+                    this.metrics.throughput.publish[this.metrics.throughput.publish.length - 1] = data.metrics.publish_rate;
+                    this.metrics.throughput.consume[this.metrics.throughput.consume.length - 1] = data.metrics.consume_rate;
+                    this.metrics.queueSizes = data.metrics.queue_metrics;
+                    
+                    this.updateThroughputChart();
+                    this.updateQueueSizeChart();
+                    
+                    // Refresh topology
+                    this.fetchRabbitMQData();
+                }
+                
+                handleMetricsHistory(data) {
+                    // Update charts with historical data
+                    const publishRates = data.publish_rates;
+                    const consumeRates = data.consume_rates;
+                    
+                    // Use the most recent 60 data points (or less if not available)
+                    const dataLength = Math.min(60, publishRates.length);
+                    const startIdx = Math.max(0, publishRates.length - 60);
+                    
+                    this.metrics.throughput.publish = publishRates.slice(startIdx, startIdx + dataLength);
+                    this.metrics.throughput.consume = consumeRates.slice(startIdx, startIdx + dataLength);
+                    
+                    // Update queue metrics
+                    this.metrics.queueSizes = {};
+                    
+                    for (const queueName in data.queue_metrics) {
+                        const queueData = data.queue_metrics[queueName];
+                        if (queueData.length > 0) {
+                            this.metrics.queueSizes[queueName] = queueData[queueData.length - 1] || 0;
+                        }
+                    }
+                    
+                    this.updateThroughputChart();
+                    this.updateQueueSizeChart();
+                }
+                
+                handleMessagePublished(data) {
+                    console.log('Message published:', data);
+                    // Could add a notification or update UI
+                }
+                
+                handleMessagesConsumed(data) {
+                    console.log('Messages consumed:', data);
+                    // Could add a notification or update UI
+                }
+                
+                async fetchRabbitMQData() {
+                    try {
+                        // Fetch topology data
+                        const response = await fetch(`${this.baseUrl}/topology/`);
+                        if (!response.ok) throw new Error('Failed to fetch topology data');
+                        
+                        const data = await response.json();
+                        this.exchanges = data.exchanges;
+                        this.queues = data.queues;
+                        this.bindings = data.bindings;
+                        
+                        this.updateExchangeSelect();
+                        this.updateQueueSelect();
+                        this.updateTopologyGraph();
+                    } catch (error) {
+                        console.error('Error fetching RabbitMQ data:', error);
+                    }
+                }
+                
+                initializeCharts() {
+                    const throughputCtx = document.getElementById('throughput-chart').getContext('2d');
+                    const queueSizeCtx = document.getElementById('queue-size-chart').getContext('2d');
+
+                    this.throughputChart = new Chart(throughputCtx, {
+                        type: 'line',
+                        data: {
+                            labels: Array(60).fill('').map((_, i) => i),
+                            datasets: [
+                                {
+                                    label: 'Publish',
+                                    data: this.metrics.throughput.publish,
+                                    borderColor: '#339af0',
+                                    backgroundColor: 'rgba(51, 154, 240, 0.1)',
+                                    borderWidth: 2,
+                                    tension: 0.4,
+                                    fill: true
+                                },
+                                {
+                                    label: 'Consume',
+                                    data: this.metrics.throughput.consume,
+                                    borderColor: '#51cf66',
+                                    backgroundColor: 'rgba(81, 207, 102, 0.1)',
+                                    borderWidth: 2,
+                                    tension: 0.4,
+                                    fill: true
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    position: 'top',
+                                    labels: {
+                                        usePointStyle: true
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    display: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Time (s)'
+                                    }
+                                },
+                                y: {
+                                    display: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Messages/s'
+                                    },
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
+
+                    this.queueSizeChart = new Chart(queueSizeCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: Object.keys(this.metrics.queueSizes),
+                            datasets: [
+                                {
+                                    label: 'Messages',
+                                    data: Object.values(this.metrics.queueSizes),
+                                    backgroundColor: [
+                                        'rgba(93, 92, 222, 0.7)',
+                                        'rgba(255, 107, 107, 0.7)',
+                                        'rgba(81, 207, 102, 0.7)'
+                                    ],
+                                    borderColor: [
+                                        'rgba(93, 92, 222, 1)',
+                                        'rgba(255, 107, 107, 1)',
+                                        'rgba(81, 207, 102, 1)'
+                                    ],
+                                    borderWidth: 1
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: false
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Messages'
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                updateThroughputChart() {
+                    this.throughputChart.update();
+                }
+
+                updateQueueSizeChart() {
+                    const filter = document.getElementById('queue-size-filter').value;
+                    let labels = Object.keys(this.metrics.queueSizes);
+                    let data = Object.values(this.metrics.queueSizes);
+
+                    if (filter === 'top5') {
+                        // Create array of [label, value] pairs
+                        const pairs = labels.map((label, i) => [label, data[i]]);
+                        // Sort by value in descending order
+                        pairs.sort((a, b) => b[1] - a[1]);
+                        // Take top 5
+                        const top5 = pairs.slice(0, 5);
+                        // Split back into labels and data
+                        labels = top5.map(pair => pair[0]);
+                        data = top5.map(pair => pair[1]);
+                    }
+
+                    this.queueSizeChart.data.labels = labels;
+                    this.queueSizeChart.data.datasets[0].data = data;
+                    this.queueSizeChart.update();
+                }
+                
+                updateExchangeSelect() {
+                    const select = document.getElementById('exchange-select');
+                    select.innerHTML = '<option value="" disabled selected>Select an exchange</option>';
+                    this.exchanges.forEach(exchange => {
+                        const option = document.createElement('option');
+                        option.value = exchange.name;
+                        option.textContent = `${exchange.name} (${exchange.exchange_type})`;
+                        select.appendChild(option);
+                    });
+                }
+
+                updateQueueSelect() {
+                    const select = document.getElementById('queue-select');
+                    select.innerHTML = '<option value="" disabled selected>Select a queue</option>';
+                    this.queues.forEach(queue => {
+                        const option = document.createElement('option');
+                        option.value = queue.name;
+                        option.textContent = queue.name;
+                        select.appendChild(option);
+                    });
+                }
+                
+                updateTopologyGraph() {
+                    const container = document.getElementById('topology-container');
+                    while (container.firstChild) {
+                        container.removeChild(container.firstChild);
+                    }
+                    
+                    const width = container.clientWidth;
+                    const height = container.clientHeight;
+
+                    const svg = d3.select('#topology-container')
+                        .append('svg')
+                        .attr('width', width)
+                        .attr('height', height)
+                        .attr('class', 'topology-svg');
+
+                    const g = svg.append('g');
+
+                    svg.call(d3.zoom().on('zoom', (event) => {
+                        g.attr('transform', event.transform);
+                    }));
+
+                    const exchangeNodes = this.exchanges.map(e => ({
+                        id: e.id,
+                        type: 'exchange',
+                        name: e.name,
+                        exchangeType: e.exchange_type
+                    }));
+
+                    const queueNodes = this.queues.map(q => ({
+                        id: q.id,
+                        type: 'queue',
+                        name: q.name,
+                        messages: q.message_count || 0
+                    }));
+
+                    const nodes = [...exchangeNodes, ...queueNodes];
+
+                    const links = this.bindings.map(b => ({
+                        source: b.exchange,
+                        target: b.queue,
+                        routingKey: b.routing_key
+                    }));
+
+                    const simulation = d3.forceSimulation(nodes)
+                        .force('link', d3.forceLink(links).id(d => d.id).distance(150))
+                        .force('charge', d3.forceManyBody().strength(-300))
+                        .force('center', d3.forceCenter(width / 2, height / 2))
+                        .on('tick', ticked);
+
+                    const link = g.append('g')
+                        .attr('class', 'links')
+                        .selectAll('g')
+                        .data(links)
+                        .enter().append('g');
+
+                    link.append('path')
+                        .attr('class', 'connection-line flow-path')
+                        .attr('marker-end', 'url(#arrowhead)');
+
+                    link.append('text')
+                        .attr('class', 'link-label')
+                        .attr('dy', -5)
+                        .attr('text-anchor', 'middle')
+                        .text(d => d.routingKey || '')
+                        .attr('fill', '#666')
+                        .attr('font-size', '10px');
+
+                    g.append('defs').append('marker')
+                        .attr('id', 'arrowhead')
+                        .attr('viewBox', '0 -5 10 10')
+                        .attr('refX', 20)
+                        .attr('refY', 0)
+                        .attr('orient', 'auto')
+                        .attr('markerWidth', 6)
+                        .attr('markerHeight', 6)
+                        .append('path')
+                        .attr('d', 'M0,-5L10,0L0,5')
+                        .attr('fill', '#999');
+
+                    const node = g.append('g')
+                        .attr('class', 'nodes')
+                        .selectAll('g')
+                        .data(nodes)
+                        .enter().append('g')
+                        .attr('class', 'node')
+                        .call(d3.drag()
+                            .on('start', dragstarted)
+                            .on('drag', dragged)
+                            .on('end', dragended));
+
+                    node.append('circle')
+                        .attr('r', d => d.type === 'exchange' ? 20 : 15)
+                        .attr('fill', d => {
+                            if (d.type === 'exchange') {
+                                return '#339af0';
+                            } else {
+                                return '#51cf66';
+                            }
+                        })
+                        .attr('stroke', '#fff')
+                        .attr('stroke-width', 2);
+
+                    node.append('text')
+                        .attr('dy', d => d.type === 'exchange' ? -25 : -20)
+                        .attr('text-anchor', 'middle')
+                        .text(d => d.name)
+                        .attr('fill', document.documentElement.classList.contains('dark') ? '#fff' : '#333')
+                        .attr('font-weight', 'bold');
+
+                    node.append('text')
+                        .attr('dy', d => d.type === 'exchange' ? 35 : 25)
+                        .attr('text-anchor', 'middle')
+                        .text(d => {
+                            if (d.type === 'exchange') {
+                                return d.exchangeType;
+                            } else {
+                                return `${d.messages} msg`;
+                            }
+                        })
+                        .attr('fill', document.documentElement.classList.contains('dark') ? '#ddd' : '#666')
+                        .attr('font-size', '10px');
+
+                    function ticked() {
+                        link.select('path')
+                            .attr('d', d => {
+                                const sourceX = d.source.x;
+                                const sourceY = d.source.y;
+                                const targetX = d.target.x;
+                                const targetY = d.target.y;
+                                return `M${sourceX},${sourceY}L${targetX},${targetY}`;
+                            });
+
+                        link.select('text')
+                            .attr('x', d => (d.source.x + d.target.x) / 2)
+                            .attr('y', d => (d.source.y + d.target.y) / 2);
+
+                        node.attr('transform', d => `translate(${d.x},${d.y})`);
+                    }
+
+                    function dragstarted(event, d) {
+                        if (!event.active) simulation.alphaTarget(0.3).restart();
+                        d.fx = d.x;
+                        d.fy = d.y;
+                    }
+
+                    function dragged(event, d) {
+                        d.fx = event.x;
+                        d.fy = event.y;
+                    }
+
+                    function dragended(event, d) {
+                        if (!event.active) simulation.alphaTarget(0);
+                        d.fx = null;
+                        d.fy = null;
+                    }
+                }
+                
+                setupEventListeners() {
+                    document.getElementById('publish-btn').addEventListener('click', this.publishMessage.bind(this));
+                    document.getElementById('consume-btn').addEventListener('click', this.consumeMessage.bind(this));
+                    document.getElementById('add-exchange-btn').addEventListener('click', this.showAddExchangeModal.bind(this));
+                    document.getElementById('add-queue-btn').addEventListener('click', this.showAddQueueModal.bind(this));
+                    document.getElementById('add-binding-btn').addEventListener('click', this.showAddBindingModal.bind(this));
+                    document.getElementById('modal-close').addEventListener('click', this.closeModal.bind(this));
+                    document.getElementById('modal-cancel').addEventListener('click', this.closeModal.bind(this));
+                    document.getElementById('modal-confirm').addEventListener('click', this.handleModalConfirm.bind(this));
+                    document.getElementById('throughput-time-range').addEventListener('change', this.updateThroughputChart.bind(this));
+                    document.getElementById('queue-size-filter').addEventListener('change', this.updateQueueSizeChart.bind(this));
+                }
+                
+                async publishMessage() {
+                    const exchangeName = document.getElementById('exchange-select').value;
+                    const routingKey = document.getElementById('routing-key').value;
+                    const payload = document.getElementById('message-payload').value;
+
+                    if (!exchangeName) {
+                        alert('Please select an exchange');
+                        return;
+                    }
+
+                    const publishBtn = document.getElementById('publish-btn');
+                    publishBtn.disabled = true;
+                    publishBtn.textContent = 'Publishing...';
+
+                    try {
+                        const response = await fetch(`${this.baseUrl}/publish/`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': this.getCsrfToken()
+                            },
+                            body: JSON.stringify({
+                                exchange: exchangeName,
+                                routing_key: routingKey,
+                                payload: payload
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error('Failed to publish message');
+                        }
+
+                        const data = await response.json();
+                        console.log('Message published:', data);
+                        
+                        // Clear the form
+                        document.getElementById('routing-key').value = '';
+                        document.getElementById('message-payload').value = '';
+
+                    } catch (error) {
+                        console.error('Error publishing message:', error);
+                        alert('Error publishing message: ' + error.message);
+                    } finally {
+                        publishBtn.disabled = false;
+                        publishBtn.textContent = 'Publish';
+                    }
+                }
+
+                async consumeMessage() {
+                    const queueName = document.getElementById('queue-select').value;
+                    const count = parseInt(document.getElementById('message-count').value, 10);
+
+                    if (!queueName) {
+                        alert('Please select a queue');
+                        return;
+                    }
+
+                    const consumeBtn = document.getElementById('consume-btn');
+                    consumeBtn.disabled = true;
+                    consumeBtn.textContent = 'Consuming...';
+
+                    try {
+                        const response = await fetch(`${this.baseUrl}/consume/`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': this.getCsrfToken()
+                            },
+                            body: JSON.stringify({
+                                queue: queueName,
+                                count: count
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error('Failed to consume messages');
+                        }
+
+                        const data = await response.json();
+                        console.log('Messages consumed:', data);
+                        
+                        // Wait a bit for processing to complete
+                        setTimeout(() => {
+                            // Check for consumed messages
+                            fetch(`${this.baseUrl}/deliveries/?queue=${queueName}&consumed=true&limit=${count}`)
+                                .then(response => response.json())
+                                .then(data => {
+                                    const messagesContainer = document.getElementById('consumed-messages');
+                                    messagesContainer.innerHTML = '';
+                                    
+                                    if (data.results && data.results.length > 0) {
+                                        data.results.forEach(msg => {
+                                            const messageItem = document.createElement('div');
+                                            messageItem.className = 'mb-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded';
+                                            messageItem.innerHTML = `
+                                                <div class="text-xs text-gray-500 dark:text-gray-400">${new Date(msg.consumed_at).toLocaleString()}</div>
+                                                <div class="text-xs text-gray-500 dark:text-gray-400">Exchange: ${msg.exchange_name}, Key: ${msg.routing_key || '(empty)'}</div>
+                                                <div class="text-sm mt-1">${msg.payload}</div>
+                                            `;
+                                            messagesContainer.appendChild(messageItem);
+                                        });
+                                    } else {
+                                        messagesContainer.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400 italic">No messages consumed</div>';
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('Error fetching consumed messages:', error);
+                                });
+                        }, 500);
+
+                    } catch (error) {
+                        console.error('Error consuming messages:', error);
+                        alert('Error consuming messages: ' + error.message);
+                    } finally {
+                        consumeBtn.disabled = false;
+                        consumeBtn.textContent = 'Consume';
+                    }
+                }
+
+                showAddExchangeModal() {
+                    document.getElementById('modal-title').textContent = 'Add Exchange';
+                    const modalContent = document.getElementById('modal-content');
+                    modalContent.innerHTML = `
+                        <div>
+                            <label for="exchange-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Exchange Name</label>
+                            <input type="text" id="exchange-name" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md" placeholder="Enter exchange name">
+                        </div>
+                        <div>
+                            <label for="exchange-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Exchange Type</label>
+                            <select id="exchange-type" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md">
+                                <option value="direct">direct</option>
+                                <option value="fanout">fanout</option>
+                                <option value="topic">topic</option>
+                                <option value="headers">headers</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center mt-4">
+                            <input type="checkbox" id="exchange-durable" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" checked>
+                            <label for="exchange-durable" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Durable</label>
+                        </div>
+                        <div class="flex items-center mt-2">
+                            <input type="checkbox" id="exchange-auto-delete" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
+                            <label for="exchange-auto-delete" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Auto Delete</label>
+                        </div>
+                        <div class="flex items-center mt-2">
+                            <input type="checkbox" id="exchange-internal" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
+                            <label for="exchange-internal" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Internal</label>
+                        </div>
+                    `;
+
+                    document.getElementById('modal-confirm').dataset.action = 'add-exchange';
+                    document.getElementById('modal').classList.remove('hidden');
+                }
+
+                showAddQueueModal() {
+                    document.getElementById('modal-title').textContent = 'Add Queue';
+                    const modalContent = document.getElementById('modal-content');
+                    modalContent.innerHTML = `
+                        <div>
+                            <label for="queue-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Queue Name</label>
+                            <input type="text" id="queue-name" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md" placeholder="Enter queue name">
+                        </div>
+                        <div class="flex items-center mt-4">
+                            <input type="checkbox" id="queue-durable" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" checked>
+                            <label for="queue-durable" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Durable</label>
+                        </div>
+                        <div class="flex items-center mt-2">
+                            <input type="checkbox" id="queue-exclusive" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
+                            <label for="queue-exclusive" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Exclusive</label>
+                        </div>
+                        <div class="flex items-center mt-2">
+                            <input type="checkbox" id="queue-auto-delete" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
+                            <label for="queue-auto-delete" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Auto Delete</label>
+                        </div>
+                    `;
+
+                    document.getElementById('modal-confirm').dataset.action = 'add-queue';
+                    document.getElementById('modal').classList.remove('hidden');
+                }
+
+                showAddBindingModal() {
+                    document.getElementById('modal-title').textContent = 'Add Binding';
+                    const modalContent = document.getElementById('modal-content');
+                    
+                    let exchangeOptions = this.exchanges.map(e => 
+                        `<option value="${e.id}">${e.name} (${e.exchange_type})</option>`
+                    ).join('');
+                    
+                    let queueOptions = this.queues.map(q => 
+                        `<option value="${q.id}">${q.name}</option>`
+                    ).join('');
+
+                    modalContent.innerHTML = `
+                        <div>
+                            <label for="binding-exchange" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Exchange</label>
+                            <select id="binding-exchange" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md">
+                                ${exchangeOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="binding-queue" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mt-4">Queue</label>
+                            <select id="binding-queue" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md">
+                                ${queueOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="binding-routing-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mt-4">Routing Key</label>
+                            <input type="text" id="binding-routing-key" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:outline-none focus:ring-primary focus:border-primary rounded-md" placeholder="Enter routing key">
+                        </div>
+                    `;
+
+                    document.getElementById('modal-confirm').dataset.action = 'add-binding';
+                    document.getElementById('modal').classList.remove('hidden');
+                }
+
+                closeModal() {
+                    document.getElementById('modal').classList.add('hidden');
+                }
+
+                async handleModalConfirm() {
+                    const action = document.getElementById('modal-confirm').dataset.action;
+                    const confirmBtn = document.getElementById('modal-confirm');
+                    
+                    confirmBtn.disabled = true;
+                    confirmBtn.textContent = 'Processing...';
+
+                    try {
+                        if (action === 'add-exchange') {
+                            const name = document.getElementById('exchange-name').value;
+                            const type = document.getElementById('exchange-type').value;
+                            const durable = document.getElementById('exchange-durable').checked;
+                            const autoDelete = document.getElementById('exchange-auto-delete').checked;
+                            const internal = document.getElementById('exchange-internal').checked;
+
+                            if (!name) {
+                                alert('Please enter an exchange name');
+                                return;
+                            }
+
+                            const response = await fetch(`${this.baseUrl}/exchanges/`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRFToken': this.getCsrfToken()
+                                },
+                                body: JSON.stringify({
+                                    name: name,
+                                    exchange_type: type,
+                                    durable: durable,
+                                    auto_delete: autoDelete,
+                                    internal: internal,
+                                    arguments: {}
+                                })
+                            });
+
+                            if (!response.ok) {
+                                throw new Error(`Failed to create exchange: ${response.statusText}`);
+                            }
+
+                            // Refresh data
+                            this.fetchRabbitMQData();
+                            
+                        } else if (action === 'add-queue') {
+                            const name = document.getElementById('queue-name').value;
+                            const durable = document.getElementById('queue-durable').checked;
+                            const exclusive = document.getElementById('queue-exclusive').checked;
+                            const autoDelete = document.getElementById('queue-auto-delete').checked;
+
+                            if (!name) {
+                                alert('Please enter a queue name');
+                                return;
+                            }
+
+                            const response = await fetch(`${this.baseUrl}/queues/`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRFToken': this.getCsrfToken()
+                                },
+                                body: JSON.stringify({
+                                    name: name,
+                                    durable: durable,
+                                    exclusive: exclusive,
+                                    auto_delete: autoDelete,
+                                    arguments: {}
+                                })
+                            });
+
+                            if (!response.ok) {
+                                throw new Error(`Failed to create queue: ${response.statusText}`);
+                            }
+
+                            // Refresh data
+                            this.fetchRabbitMQData();
+                            
+                        } else if (action === 'add-binding') {
+                            const exchangeId = document.getElementById('binding-exchange').value;
+                            const queueId = document.getElementById('binding-queue').value;
+                            const routingKey = document.getElementById('binding-routing-key').value;
+
+                            if (!exchangeId || !queueId) {
+                                alert('Please select both exchange and queue');
+                                return;
+                            }
+
+                            const response = await fetch(`${this.baseUrl}/bindings/`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRFToken': this.getCsrfToken()
+                                },
+                                body: JSON.stringify({
+                                    exchange: exchangeId,
+                                    queue: queueId,
+                                    routing_key: routingKey,
+                                    arguments: {}
+                                })
+                            });
+
+                            if (!response.ok) {
+                                throw new Error(`Failed to create binding: ${response.statusText}`);
+                            }
+
+                            // Refresh data
+                            this.fetchRabbitMQData();
+                        }
+
+                        this.closeModal();
+                    } catch (error) {
+                        console.error('Error:', error);
+                        alert(error.message);
+                    } finally {
+                        confirmBtn.disabled = false;
+                        confirmBtn.textContent = 'Confirm';
+                    }
+                }
+                
+                getCsrfToken() {
+                    // Get CSRF token from cookie
+                    const name = 'csrftoken=';
+                    const decodedCookie = decodeURIComponent(document.cookie);
+                    const cookieArray = decodedCookie.split(';');
+                    
+                    for (let i = 0; i < cookieArray.length; i++) {
+                        let cookie = cookieArray[i].trim();
+                        if (cookie.indexOf(name) === 0) {
+                            return cookie.substring(name.length, cookie.length);
+                        }
+                    }
+                    
+                    return '';
+                }
+            }
+
+            const dashboard = new RabbitMQDashboard();
+        });
+    </script>
+</body>
+</html>
